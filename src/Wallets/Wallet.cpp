@@ -39,19 +39,19 @@ using namespace monero_wallet_utils;
 // Accessory types
 struct OptlErrStrCBFunctor
 { // when you pass this functor to its destination, do a std::move of it to the destination
-	std::function<void(optional<string> err_str)> fn; // do a std::move to this property manually
-	void operator()(optional<string> err_str)
+	std::function<void(boost::optional<string> err_str)> fn; // do a std::move to this property manually
+	void operator()(boost::optional<string> err_str)
 	{
 		fn(err_str);
 	}
 };
 struct LogInReqCBFunctor
 { // when you pass this functor to its destination, do a std::move of it to the destination
-	std::function<void(optional<string> err_str, optional<HostedMonero::ParsedResult_Login> result)> fn; // do a std::move to this property manually
+	std::function<void(boost::optional<string> err_str, boost::optional<HostedBeldex::ParsedResult_Login> result)> fn; // do a std::move to this property manually
 	~LogInReqCBFunctor() {
 		cout << "LogInReqCBFunctor dtor" << endl;
 	}
-	void operator()(optional<string> err_str, optional<HostedMonero::ParsedResult_Login> result)
+	void operator()(boost::optional<string> err_str, boost::optional<HostedBeldex::ParsedResult_Login> result)
 	{
 		if (err_str != none) {
 			fn(std::move(*err_str), none);
@@ -86,11 +86,11 @@ void Object::tearDownRuntime()
 }
 void Object::deBoot()
 {
-//	optional<uint64_t> old__totalReceived = none;
-//	optional<uint64_t> old__totalSent = none;
-//	optional<uint64_t> old__lockedBalance = none;
-//	optional<std::vector<HostedMonero::SpentOutputDescription>> old__spentOutputs = none;
-//	optional<std::vector<HostedMonero::HistoricalTxRecord>> old__transactions = none;
+//	boost::optional<uint64_t> old__totalReceived = none;
+//	boost::optional<uint64_t> old__totalSent = none;
+//	boost::optional<uint64_t> old__lockedBalance = none;
+//	boost::optional<std::vector<HostedBeldex::SpentOutputDescription>> old__spentOutputs = none;
+//	boost::optional<std::vector<HostedBeldex::HistoricalTxRecord>> old__transactions = none;
 //	if (_totalReceived != none) {
 //		old__totalReceived = *_totalReceived;
 //	}
@@ -140,7 +140,7 @@ void Object::deBoot()
 		___didReceiveActualChangeTo_transactions();
 		regenerate_shouldDisplayImportAccountOption();
 	}
-	optional<string> save__err_str = saveToDisk();
+	boost::optional<string> save__err_str = saveToDisk();
 	if (save__err_str != none) {
 		MERROR("Wallet: Error while saving during a deBoot(): " << *save__err_str);
 	}
@@ -148,19 +148,19 @@ void Object::deBoot()
 //
 // Runtime - Imperatives - Private - Booting
 void Object::Boot_havingLoadedDecryptedExistingInitDoc(
-	std::function<void(optional<string> err_str)> fn
+	std::function<void(boost::optional<string> err_str)> fn
 ) { // nothing to do here as we assume validation done on init
 	_trampolineFor_successfullyBooted(std::move(fn));
 }
 void Object::_setStateThatFailedToBoot(
-	optional<string> err_str
+	boost::optional<string> err_str
 ) {
 	didFailToBoot_flag = true;
 	didFailToBoot_errStr = err_str;
 }
 void Object::__trampolineFor_failedToBootWith_fnAndErrStr(
-	std::function<void(optional<string> err_str)>&& fn,
-	optional<string> err_str
+	std::function<void(boost::optional<string> err_str)>&& fn,
+	boost::optional<string> err_str
 ) {
 	_setStateThatFailedToBoot(err_str);
 	//
@@ -174,7 +174,7 @@ void Object::__trampolineFor_failedToBootWith_fnAndErrStr(
 	fn(err_str);
 }
 void Object::_trampolineFor_successfullyBooted(
-	std::function<void(optional<string> err_str)>&& fn
+	std::function<void(boost::optional<string> err_str)>&& fn
 ) {
 	if (_account_seed == none || _account_seed->empty()) {
 		MWARNING("Wallets: Wallet initialized without an account_seed.");
@@ -210,7 +210,7 @@ void Object::_trampolineFor_successfullyBooted(
 	___proceed_havingActuallyBooted__trampolineFor_successfullyBooted(std::move(fn));
 }
 void Object::___proceed_havingActuallyBooted__trampolineFor_successfullyBooted(
-	std::function<void(optional<string> err_str)>&& fn
+	std::function<void(boost::optional<string> err_str)>&& fn
 ) {
 //	DDLog.Done("Wallets", "Successfully booted \(self)")
 	_isBooted = true;
@@ -267,10 +267,10 @@ void Object::_boot_byLoggingIn(
 	const string &address,
 	const string &sec_viewKey_string,
 	const string &sec_spendKey_string,
-	optional<string> seed_orNone,
+	boost::optional<string> seed_orNone,
 	bool wasAGeneratedWallet,
 	bool persistEvenIfLoginFailed_forServerChange,
-	std::function<void(optional<string> err_str)> fn
+	std::function<void(boost::optional<string> err_str)> fn
 ) {
 	_isLoggingIn = true;
 	//
@@ -341,8 +341,8 @@ void Object::_boot_byLoggingIn(
 		persistEvenIfLoginFailed_forServerChange,
 		cb_functor
 	] (
-		optional<string> login__err_str,
-		optional<HostedMonero::ParsedResult_Login> result
+		boost::optional<string> login__err_str,
+		boost::optional<HostedBeldex::ParsedResult_Login> result
 	) {
 		if (auto inner_spt = weak_this.lock()) {
 			inner_spt->_isLoggingIn = false;
@@ -368,7 +368,7 @@ void Object::_boot_byLoggingIn(
 				//
 				inner_spt->regenerate_shouldDisplayImportAccountOption(); // now this can be called
 			}
-			optional<string> saveToDisk__err_str = inner_spt->saveToDisk();
+			boost::optional<string> saveToDisk__err_str = inner_spt->saveToDisk();
 			if (saveToDisk__err_str != none) {
 				inner_spt->__trampolineFor_failedToBootWith_fnAndErrStr(
 					std::move(cb_functor),
@@ -401,7 +401,7 @@ void Object::_boot_byLoggingIn(
 void Object::Boot_byLoggingIn_givenNewlyCreatedWallet(
 	const string &walletLabel,
 	SwatchColor swatchColor,
-	std::function<void(optional<string> err_str)> fn
+	std::function<void(boost::optional<string> err_str)> fn
 ) {
 	_walletLabel = walletLabel;
 	_swatchColor = swatchColor;
@@ -425,7 +425,7 @@ void Object::Boot_byLoggingIn_existingWallet_withMnemonic(
 	SwatchColor swatchColor,
 	const string &mnemonic_string,
 	bool persistEvenIfLoginFailed_forServerChange,
-	std::function<void(optional<string> err_str)> fn
+	std::function<void(boost::optional<string> err_str)> fn
 ) {
 	_walletLabel = walletLabel;
 	_swatchColor = swatchColor;
@@ -469,7 +469,7 @@ void Object::Boot_byLoggingIn_existingWallet_withAddressAndKeys(
 	const string &sec_viewKey_string,
 	const string &sec_spendKey_string,
 	bool persistEvenIfLoginFailed_forServerChange,
-	std::function<void(optional<string> err_str)> fn
+	std::function<void(boost::optional<string> err_str)> fn
 ) {
 	_walletLabel = walletLabel;
 	_swatchColor = swatchColor;
@@ -495,7 +495,7 @@ void Object::logOutThenSaveAndLogIn()
 		_account_seed,
 		_local_wasAGeneratedWallet != none ? *_local_wasAGeneratedWallet : false,
 		true, // persistEvenIfLoginFailed_forServerChange
-		[](optional<string> err_str)
+		[](boost::optional<string> err_str)
 		{
 			if (err_str != none) {
 				MERROR("Wallets: Failed to log back in with error: " << *err_str);
@@ -537,7 +537,7 @@ void Object::regenerate_shouldDisplayImportAccountOption()
 }
 //
 // Runtime (Booted) - Imperatives - Updates
-optional<string/*err_str*/> Object::SetValuesAndSave(
+boost::optional<string/*err_str*/> Object::SetValuesAndSave(
 	string walletLabel,
 	SwatchColor swatchColor
 ) {
@@ -547,7 +547,7 @@ optional<string/*err_str*/> Object::SetValuesAndSave(
 		_walletLabel = walletLabel;
 		_swatchColor = swatchColor;
 	}
-	optional<string> err_str = saveToDisk();
+	boost::optional<string> err_str = saveToDisk();
 	if (err_str != none) {
 		return std::move(*err_str);
 	}
@@ -568,13 +568,13 @@ optional<string/*err_str*/> Object::SetValuesAndSave(
 //
 // Imperatives - Local tx CRUD
 void Object::_manuallyInsertTransactionRecord(
-	const HostedMonero::HistoricalTxRecord &transaction
+	const HostedBeldex::HistoricalTxRecord &transaction
 ) {
 	if (_transactions == none) {
-		_transactions = std::vector<HostedMonero::HistoricalTxRecord>();
+		_transactions = std::vector<HostedBeldex::HistoricalTxRecord>();
 	}
 	(*_transactions).push_back(transaction); // pushing a copy
-	optional<string> err_str = saveToDisk();
+	boost::optional<string> err_str = saveToDisk();
 	if (err_str != none) {
 		return; // TODO: anything to do here? maybe saveToDisk should implement retry logic
 	}
@@ -690,7 +690,7 @@ void Object::_manuallyInsertTransactionRecord(
 //		} catch let e {
 //			fatalError("req_params_json_string parse error … \(e)")
 //		}
-//		thisSelf._current_sendFunds_request = HostedMonero.APIClient.shared.UnspentOuts(
+//		thisSelf._current_sendFunds_request = HostedBeldex.APIClient.shared.UnspentOuts(
 //																						parameters: parameters,
 //																						{ [weak thisSelf] (err_str, response_data) in
 //																							guard let thisThisSelf = thisSelf else {
@@ -715,7 +715,7 @@ void Object::_manuallyInsertTransactionRecord(
 //		} catch let e {
 //			fatalError("req_params_json_string parse error … \(e)")
 //		}
-//		thisSelf._current_sendFunds_request = HostedMonero.APIClient.shared.RandomOuts(
+//		thisSelf._current_sendFunds_request = HostedBeldex.APIClient.shared.RandomOuts(
 //																					   parameters: parameters,
 //																					   { [weak thisSelf] (err_str, response_data) in
 //																						   guard let thisThisSelf = thisSelf else {
@@ -740,7 +740,7 @@ void Object::_manuallyInsertTransactionRecord(
 //		} catch let e {
 //			fatalError("req_params_json_string parse error … \(e)")
 //		}
-//		thisSelf._current_sendFunds_request = HostedMonero.APIClient.shared.SubmitSerializedSignedTransaction(
+//		thisSelf._current_sendFunds_request = HostedBeldex.APIClient.shared.SubmitSerializedSignedTransaction(
 //																											  parameters: parameters,
 //																											  { [weak thisSelf] (err_str, response_data) in
 //																												  guard let thisThisSelf = thisSelf else {
@@ -880,7 +880,7 @@ void Object::__unlock_sending()
 //
 // HostPollingController - Delegation / Protocol
 void Object::_HostPollingController_didFetch_addressInfo(
-	const HostedMonero::ParsedResult_AddressInfo &parsedResult
+	const HostedBeldex::ParsedResult_AddressInfo &parsedResult
 ) {
 	auto xmrToCcyRatesByCcy = parsedResult.xmrToCcyRatesByCcy; // copy
 	std::shared_ptr<Object> shared_this = shared_from_this();
@@ -917,7 +917,7 @@ void Object::_HostPollingController_didFetch_addressInfo(
 	_dateThatLast_fetchedAccountInfo = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	//
 	// Write:
-	optional<string> err_str = saveToDisk();
+	boost::optional<string> err_str = saveToDisk();
 	if (err_str != none) {
 		return; // there was an issue saving update… TODO: silence here ok for now?
 	}
@@ -942,7 +942,7 @@ void Object::_HostPollingController_didFetch_addressInfo(
 	}
 }
 void Object::_HostPollingController_didFetch_addressTransactions(
-	const HostedMonero::ParsedResult_AddressTransactions &parsedResult
+	const HostedBeldex::ParsedResult_AddressTransactions &parsedResult
 ) {
 	bool didActuallyChange_heights = (_account_scanned_height == none || *_account_scanned_height != parsedResult.account_scanned_height)
 		|| (_account_scanned_block_height == none || *_account_scanned_block_height != parsedResult.account_scanned_block_height)
@@ -960,13 +960,13 @@ void Object::_HostPollingController_didFetch_addressTransactions(
 	// Doing this allows us to selectively preserve already-cached info.
 	size_t numberOfTransactionsAdded = 0; // to be finalized…
 	//		var newTransactions = [MoneroHistoricalTransactionRecord]()
-	std::vector<HostedMonero::HistoricalTxRecord> existing_transactions; // to be finalized…
+	std::vector<HostedBeldex::HistoricalTxRecord> existing_transactions; // to be finalized…
 	if (_transactions != none) {
 		existing_transactions = std::move(*_transactions); // copy! (or rather, a move … because we're just about to reconstruct it)
 	}
 	//
 	// Always make sure to construct new array so we have the old set
-	std::unordered_map<string, HostedMonero::HistoricalTxRecord> txs_by_hash;
+	std::unordered_map<string, HostedBeldex::HistoricalTxRecord> txs_by_hash;
 	//
 	//
 	// TODO: optimize this by using raw ptrs or smart ptrs
@@ -981,12 +981,12 @@ void Object::_HostPollingController_didFetch_addressTransactions(
 		// in JS here we delete the 'id' field but we don't have it in Swift - in JS, the comment is: "because this field changes while sending funds, even though hash stays the same, and because we don't want `id` messing with our ability to diff. so we're not even going to try to store this"
 		std::unordered_map<
 			string,
-			HostedMonero::HistoricalTxRecord
+			HostedBeldex::HistoricalTxRecord
 		>::const_iterator existing_tx__it = txs_by_hash.find((*incoming_tx__it).hash);
 		bool isNewTransaction = existing_tx__it == txs_by_hash.end();
 		// ^- If any existing tx is also in incoming txs, this will cause
 		// the (correct) deletion of e.g. isJustSentTransaction=true.
-		HostedMonero::HistoricalTxRecord final_incoming_tx = *incoming_tx__it; // a mutable copy
+		HostedBeldex::HistoricalTxRecord final_incoming_tx = *incoming_tx__it; // a mutable copy
 		if (isNewTransaction) { // This is generally now only going to be hit when new incoming txs happen - or outgoing txs done on other logins
 			didActuallyChange_transactions = true;
 			numberOfTransactionsAdded += 1;
@@ -1031,11 +1031,11 @@ void Object::_HostPollingController_didFetch_addressTransactions(
 //		}
 	}
 	//
-	std::vector<HostedMonero::HistoricalTxRecord> finalized_transactions;
+	std::vector<HostedBeldex::HistoricalTxRecord> finalized_transactions;
 	for (auto it = txs_by_hash.begin(); it != txs_by_hash.end(); it++) {
 		finalized_transactions.push_back(it->second); // TODO: this is also a copy …… optimize this by using a pointer
 	}
-	sort(finalized_transactions.begin(), finalized_transactions.end(), HostedMonero::sorting_historicalTxRecords_byTimestamp_walletsList);
+	sort(finalized_transactions.begin(), finalized_transactions.end(), HostedBeldex::sorting_historicalTxRecords_byTimestamp_walletsList);
 	//
 	_transactions = std::move(finalized_transactions);
 	//
@@ -1043,7 +1043,7 @@ void Object::_HostPollingController_didFetch_addressTransactions(
 	_dateThatLast_fetchedAccountTransactions = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	//
 	// Write:
-	optional<string> err_str = saveToDisk();
+	boost::optional<string> err_str = saveToDisk();
 	if (err_str != none) {
 		return; // there was an issue saving update… TODO: silence here ok for now?
 	}

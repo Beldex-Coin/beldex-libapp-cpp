@@ -1,7 +1,7 @@
 //
 //  HTTPRequests_Interface.hpp
 //  Copyright (c) 2014-2019, MyMonero.com
-//
+//  Copyright (c)      2023, The Beldex Project
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -79,7 +79,7 @@ namespace HTTPRequests
 			string authority, // host+':'+port
 			string endpoint_path,
 			ReqParams params,
-			std::function<void(optional<string> err_str, std::shared_ptr<ResponseJSON> res)> fn
+			std::function<void(boost::optional<string> err_str, std::shared_ptr<ResponseJSON> res)> fn
 		) = 0;
 	private:
 	};
