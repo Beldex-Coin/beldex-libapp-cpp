@@ -82,6 +82,7 @@ namespace SendFunds
 		exceededConstructionAttempts = 14, // unable to construct for unknown reason
 		withSweepingOnlyOneAddressAllowed  = 15,
 		numAmountsDoesntMatchNumRecipients = 16,
+		invalidMNData=17,
 		//
 		codeFault_manualPaymentID_while_hasPickedAContact = 99900,
 		codeFault_unableToFindResolvedAddrOnOAContact = 99901,
@@ -116,6 +117,7 @@ namespace SendFunds
 	{
 		//
 		// Input values:
+		boost::optional<master_node_data> mn_data;
 		bool fromWallet_didFailToInitialize;
 		bool fromWallet_didFailToBoot;
 		bool fromWallet_needsImport;
@@ -203,6 +205,7 @@ namespace SendFunds
 		// - state
 		_Send_Task_ValsState valsState;
 		// - from setup
+		boost::optional<master_node_data> mn_data;
 		vector<uint64_t> sending_amounts;
 		vector<string> to_address_strings;
 		boost::optional<string> payment_id_string;

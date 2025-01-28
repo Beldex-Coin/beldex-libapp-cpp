@@ -112,6 +112,15 @@ void FormSubmissionController::handle()
 		}
 	}
 
+	boost::optional<master_node_data> mn_data_ = boost::none;
+	if(this->parameters.mn_data != boost::none){
+		this->mn_data = this->parameters.mn_data.get();
+	}
+	else{
+		this->parameters.failure_fn(invalidMNData, boost::none, boost::none, boost::none, boost::none);
+		return;
+	}
+	
 	//
 	bool resolvedAddress_exists = this->parameters.resolvedAddress != boost::none && !this->parameters.resolvedAddress->empty(); // NOTE: it might be hidden, though!
 	//
@@ -425,6 +434,7 @@ void FormSubmissionController::cb_II__got_random_outs(
 	beldex_transfer_utils::send_step2__try_create_transaction(
 		step2_retVals,
 		//
+		this->parameters.mn_data,
 		this->parameters.from_address_string,
 		this->parameters.sec_viewKey_string,
 		this->parameters.sec_spendKey_string,
