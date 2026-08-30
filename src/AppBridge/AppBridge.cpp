@@ -295,17 +295,23 @@ std::shared_ptr<HTTPRequests::Handle> Bridge::new_request(
 		BOOST_THROW_EXCEPTION(logic_error("Unexpected number of authority_components"));
 		return nullptr;
 	}
-	const char *host = authority_components[0].c_str();
-	const char *port = authority_components.size() == 1
-		? port_from_scheme(scheme).c_str()
-		: authority_components[1].c_str();
+	// MEMORY SAFETY: same dangling-pointer fix as in HTTPRequests.beast.hpp — see the
+	// longer note there. `port_from_scheme` returns a `std::string` by value, so
+	// `.c_str()` on it yielded a pointer into a temporary that was already destroyed by
+	// the time `string(port)` copied from it. That is the branch taken whenever the URL
+	// omits an explicit port, i.e. the normal case. Holding the values as strings removes
+	// the lifetime question entirely.
+	const string host = authority_components[0];
+	const string port = authority_components.size() == 1
+		? port_from_scheme(scheme)
+		: authority_components[1];
 	//
 	//			auto verb = string("post"); // here, always POST, for now
 	std::shared_ptr<App::Bridge> shared_this = shared_from_this();
 	std::weak_ptr<App::Bridge> weak_this = shared_this;
 	auto handle_ptr = std::make_shared<Handle_bridge>(
 		weak_this,
-		string(host), string(port), endpoint_path,
+		host, port, endpoint_path,
 		std::move(fn)
 	);
 	handle_ptr->run(

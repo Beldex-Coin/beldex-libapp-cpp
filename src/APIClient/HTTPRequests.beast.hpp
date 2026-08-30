@@ -33,6 +33,7 @@
 #define HTTPRequests_beast_hpp
 
 #include "./HTTPRequests_Interface.hpp"
+#include <boost/version.hpp> // for BOOST_VERSION, used to pick the hostname-verifier name
 #include <boost/beast.hpp>
 #include <boost/beast/http/read.hpp>
 #include <boost/beast/http/write.hpp>
@@ -114,6 +115,40 @@ namespace HTTPRequests
 			if (SSL_set_tlsext_host_name(_stream.native_handle(), _host.c_str()) == false) { // Set SNI Hostname (many hosts need this to handshake successfully)
 				boost::system::error_code ec{static_cast<int>(::ERR_get_error()), boost::asio::error::get_ssl_category()};
 				_call_fn_with(string(ec.message()));
+				return;
+			}
+			// SECURITY: verify that the presented certificate actually belongs to the host
+			// we asked for. The ssl::context sets `ssl::verify_peer`, which only checks
+			// that the chain terminates in a trusted root — it does NOT compare the
+			// certificate's subject/SAN against the hostname, and Boost.Asio performs no
+			// such comparison unless a verify callback asks for it. Setting the SNI
+			// extension above does not help: SNI is a hint sent to the *server* about which
+			// certificate to serve, and a man-in-the-middle is free to ignore it.
+			//
+			// So the connection previously accepted any certificate signed by any CA in the
+			// trust store, for any name at all. Obtaining such a certificate is a routine,
+			// free operation, which reduces intercepting this client's traffic to being on
+			// the network path — exactly the attack TLS is deployed here to prevent. This
+			// is the wallet's API transport, so the intercepted traffic is balance and
+			// transaction data.
+			//
+			// The callback has to be installed on the stream rather than in
+			// `callOnce_setupAndReturn__ssl_ctx()` because the hostname is per-request,
+			// while the verification mode is per-context; and `_host` is not yet assigned
+			// when the context helper runs during construction.
+			//
+			// `ssl::host_name_verification` is the current spelling (Boost 1.73+);
+			// `rfc2818_verification` is the pre-1.73 name for the same check. Both are
+			// compiled conditionally so this builds against either, since the Boost version
+			// is not pinned anywhere in the repository.
+			boost::system::error_code verify_ec;
+#if BOOST_VERSION >= 107300
+			_stream.set_verify_callback(ssl::host_name_verification(_host), verify_ec);
+#else
+			_stream.set_verify_callback(ssl::rfc2818_verification(_host), verify_ec);
+#endif
+			if (verify_ec) {
+				_call_fn_with(string(verify_ec.message()));
 				return;
 			}
 			ostringstream target_ss;
@@ -379,15 +414,33 @@ namespace HTTPRequests
 				BOOST_THROW_EXCEPTION(logic_error("Unexpected number of authority_components"));
 				return nullptr;
 			}
-			const char *host = authority_components[0].c_str();
-			const char *port = authority_components.size() == 1
-				? port_from_scheme(scheme).c_str()
-				: authority_components[1].c_str();
+			// MEMORY SAFETY: these are `std::string` values, not `const char *`. The previous
+			// code wrote
+			//
+			//     const char *port = authority_components.size() == 1
+			//         ? port_from_scheme(scheme).c_str()
+			//         : authority_components[1].c_str();
+			//
+			// and `port_from_scheme` returns a string *by value*. That temporary is destroyed
+			// at the end of the full expression, so in the one-component branch `port` was
+			// left pointing into freed memory before it was ever read, and the `string(port)`
+			// below then copied from it. That branch is the common case, not an edge case: it
+			// is taken by every URL that does not spell out a port.
+			//
+			// The observed behaviour of a small freed std::string buffer is usually "it still
+			// looks right", which is why this survived — but it is undefined behaviour, and
+			// the value being reconstructed is the port the wallet is about to connect to.
+			// `host` was not affected (it points into a live vector element) but is converted
+			// too, so the two are handled the same way and neither can regress.
+			const string host = authority_components[0];
+			const string port = authority_components.size() == 1
+				? port_from_scheme(scheme)
+				: authority_components[1];
 			//
 			auto verb = boost::beast::http::verb::post;
 			auto handle_ptr = std::make_shared<Handle_beast>(
 				_io_ctx,
-				verb, string(host), string(port), endpoint_path,
+				verb, host, port, endpoint_path,
 				std::move(fn)
 			);
 			handle_ptr->run(
