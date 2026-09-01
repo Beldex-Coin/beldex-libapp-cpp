@@ -41,7 +41,7 @@ using namespace std;
 using namespace boost;
 using namespace rapidjson;
 //
-// Shared - Utility - can be kept in here for now or copied easily … not necessarily bad given stasis
+// Shared - Utility - can be kept in here for now or copied easily … not necessarily bad given stasis
 //
 // i.e. assert() + exception msg.:
 #define BOOST_THROW_EXCEPTION_IF_NOT(cond, err) \
@@ -53,8 +53,14 @@ using namespace rapidjson;
 //
 // Lifecycle - Setup
 
-
-
+/**
+ * @brief Initializes the Application Bridge and Service Locator.
+ * 
+ * @param pImpl_ptr__orNULL Pointer to a specific platform implementation, if applicable.
+ * @param documentsPath Shared pointer representing the path for saving local documents.
+ * @param nettype The configured network type (e.g., mainnet, testnet).
+ * @param this_dispatch_ptr Shared pointer to the dispatch queue governing asynchronous callbacks.
+ */
 void Bridge::setup(
 	ServiceLocator_SpecificImpl *pImpl_ptr__orNULL,
 	std::shared_ptr<string> documentsPath,
@@ -77,6 +83,12 @@ void Bridge::setup(
 	//
 	startObserving();
 }
+
+/**
+ * @brief Starts observing critical events from the service locator.
+ * 
+ * Sets up listeners for password state and wallet modifications.
+ */
 void Bridge::startObserving()
 {
 	cout << "TODO: Start observing the locator here" << endl;
@@ -89,6 +101,10 @@ void Bridge::startObserving()
 }
 //
 // Lifecycle - Destructor
+
+/**
+ * @brief Tears down the bridge, safely releasing dependencies and pointers.
+ */
 void Bridge::teardown()
 {
 	locator = nullptr;
@@ -96,6 +112,12 @@ void Bridge::teardown()
 }
 //
 // Imperatives - Public
+
+/**
+ * @brief Parses and executes a serialized bridge command payload.
+ * 
+ * @param msg The serialized JSON string payload representing the command module, name, and parameters.
+ */
 void Bridge::exec(const string &msg)
 {
 	rapidjson::Document d;
@@ -131,6 +153,14 @@ void Bridge::exec(const string &msg)
 }
 //
 // Imperatives - Private
+
+/**
+ * @brief Emits a bridge event asynchronously to the configured dispatch queue.
+ * 
+ * @param moduleName The target module emitting the event.
+ * @param eventName The specific event name.
+ * @param optl__construct_fn Optional callback lambda responsible for constructing event parameters.
+ */
 void Bridge::_emitWith(
 	const ModuleName &moduleName,
 	const EventName &eventName,
@@ -152,6 +182,14 @@ void Bridge::_emitWith(
 //
 // Imperatives - Exec
 //  - Native Extensions - PasswordController
+
+/**
+ * @brief Handles the execution of PasswordController specific commands.
+ * 
+ * @param locator The application's service locator tracking system state.
+ * @param cmdName The specific PasswordController command to execute.
+ * @param params Structured JSON parameters for the command operation.
+ */
 void _exec_PasswordController(
 	std::shared_ptr<App::ServiceLocator> locator,
 	const CmdName &cmdName,
@@ -203,6 +241,14 @@ void _exec_PasswordController(
 	BOOST_ASSERT_MSG(false, "_exec_PasswordController: Unrecognized cmdName");
 
 }
+
+/**
+ * @brief Routes the execution to the appropriate module handler.
+ * 
+ * @param module_name The target module name matching the incoming payload.
+ * @param cmdName The command name.
+ * @param params The structured JSON parameters for the command.
+ */
 void Bridge::_exec(
 	const ModuleName &module_name,
 	const CmdName &cmdName,
@@ -215,7 +261,7 @@ void Bridge::_exec(
 		return;
 	}
 	cout << "TODO: handle _exec(…) of " << module_name << "::" << cmdName << endl;
-//	if ( … )  { // TODO
+//	if ( … )  { // TODO
 //	}
 	// …
 	BOOST_ASSERT_MSG(false, "Unrecognized module_name");
@@ -223,6 +269,14 @@ void Bridge::_exec(
 //
 //
 // Password Entry
+
+/**
+ * @brief Requests the user to securely enter their existing application password.
+ * 
+ * @param isForChangePassword Indicates if this prompt is part of a password rotation flow.
+ * @param isForAuthorizingAppActionOnly Indicates if this is purely to authorize an action like sending funds.
+ * @param customNavigationBarTitle Optional custom title injected into the navigation bar UI.
+ */
 void Bridge::getUserToEnterExistingPassword(
 	bool isForChangePassword,
 	bool isForAuthorizingAppActionOnly, // normally no - this is for things like SendFunds
@@ -249,6 +303,12 @@ void Bridge::getUserToEnterExistingPassword(
 		}
 	);
 }
+
+/**
+ * @brief Requests the user to enter a new password and select its encryption strength.
+ * 
+ * @param isForChangePassword Indicates if this prompt is part of a password rotation flow.
+ */
 void Bridge::getUserToEnterNewPasswordAndType(
 	bool isForChangePassword
 ) {
@@ -267,6 +327,17 @@ void Bridge::getUserToEnterNewPasswordAndType(
 }
 //
 // HTTPRequests::RequestFactory
+
+/**
+ * @brief Creates a new HTTP request handle acting as a bridge to the application layer.
+ * 
+ * @param scheme The URL scheme (e.g., HTTP, HTTPS).
+ * @param authority Combined host and port string.
+ * @param endpoint_path Target endpoint path for the outgoing request.
+ * @param params Request parameters to be serialized.
+ * @param fn Completion callback resolving with error string or successful JSON response.
+ * @return A shared pointer to the newly tracked HTTP request handle.
+ */
 std::shared_ptr<HTTPRequests::Handle> Bridge::new_request(
 	Scheme scheme,
 	string authority, // host+':'+port
@@ -295,17 +366,23 @@ std::shared_ptr<HTTPRequests::Handle> Bridge::new_request(
 		BOOST_THROW_EXCEPTION(logic_error("Unexpected number of authority_components"));
 		return nullptr;
 	}
-	const char *host = authority_components[0].c_str();
-	const char *port = authority_components.size() == 1
-		? port_from_scheme(scheme).c_str()
-		: authority_components[1].c_str();
+	// MEMORY SAFETY: same dangling-pointer fix as in HTTPRequests.beast.hpp — see the
+	// longer note there. `port_from_scheme` returns a `std::string` by value, so
+	// `.c_str()` on it yielded a pointer into a temporary that was already destroyed by
+	// the time `string(port)` copied from it. That is the branch taken whenever the URL
+	// omits an explicit port, i.e. the normal case. Holding the values as strings removes
+	// the lifetime question entirely.
+	const string host = authority_components[0];
+	const string port = authority_components.size() == 1
+		? port_from_scheme(scheme)
+		: authority_components[1];
 	//
 	//			auto verb = string("post"); // here, always POST, for now
 	std::shared_ptr<App::Bridge> shared_this = shared_from_this();
 	std::weak_ptr<App::Bridge> weak_this = shared_this;
 	auto handle_ptr = std::make_shared<Handle_bridge>(
 		weak_this,
-		string(host), string(port), endpoint_path,
+		host, port, endpoint_path,
 		std::move(fn)
 	);
 	handle_ptr->run(

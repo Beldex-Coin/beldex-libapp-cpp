@@ -33,6 +33,7 @@
 #define HTTPRequests_beast_hpp
 
 #include "./HTTPRequests_Interface.hpp"
+#include <boost/version.hpp> // for BOOST_VERSION, used to pick the hostname-verifier name
 #include <boost/beast.hpp>
 #include <boost/beast/http/read.hpp>
 #include <boost/beast/http/write.hpp>
@@ -59,9 +60,25 @@ namespace HTTPRequests
 	using response = boost::beast::http::response<body_type>;
 	using boost::asio::ip::tcp;
 	
+	/**
+	 * @brief A Boost.Beast-based HTTP request handle implementation.
+	 * 
+	 * Inherits from the base Handle interface to manage asynchronous HTTP/HTTPS
+	 * request lifecycles, execution, and cancellation.
+	 */
 	struct Handle_beast: public Handle, public std::enable_shared_from_this<Handle_beast>
 	{
 	public:
+		/**
+		 * @brief Constructs a new Beast HTTP request handle.
+		 * 
+		 * @param io_ctx The Boost ASIO I/O context.
+		 * @param verb The HTTP verb (e.g., POST, GET).
+		 * @param host The target hostname.
+		 * @param port The target port.
+		 * @param endpoint_path The API endpoint path.
+		 * @param fn Callback function invoked with either an error string or a valid JSON response.
+		 */
 		Handle_beast(
 			boost::asio::io_context &io_ctx,
 			boost::beast::http::verb verb,
@@ -78,15 +95,31 @@ namespace HTTPRequests
 			_endpoint_path(endpoint_path),
 			_fn(std::move(fn))
 		{}
+
+		/**
+		 * @brief Destroys the Beast HTTP request handle.
+		 */
 		~Handle_beast() {}
 		//
 		// Accessors
+
+		/**
+		 * @brief Safely retrieves the parsed JSON response object.
+		 * 
+		 * @return A shared pointer to the atomic rapidjson::Document containing the response.
+		 */
 		auto atomic_get() const
 		{
 			return std::atomic_load(&_result);
 		}
 		//
 		// Imperatives - Override
+
+		/**
+		 * @brief Cancels the ongoing HTTP request.
+		 * 
+		 * Gracefully interrupts underlying sockets and streams if the connection is still active.
+		 */
 		void cancel() override
 		{
 			cout << "Canceling a HTTPRequests::Handle_beast<" << this << ">" << endl;
@@ -109,11 +142,52 @@ namespace HTTPRequests
 		}
 		//
 		// Imperatives - Public
+
+		/**
+		 * @brief Initiates the HTTP request asynchronously.
+		 * 
+		 * @param set_postbody Indicates if the request has a JSON body payload.
+		 * @param postbody The body parameters to serialize and send.
+		 */
 		void run(bool set_postbody, ReqParams postbody)
 		{
 			if (SSL_set_tlsext_host_name(_stream.native_handle(), _host.c_str()) == false) { // Set SNI Hostname (many hosts need this to handshake successfully)
 				boost::system::error_code ec{static_cast<int>(::ERR_get_error()), boost::asio::error::get_ssl_category()};
 				_call_fn_with(string(ec.message()));
+				return;
+			}
+			// SECURITY: verify that the presented certificate actually belongs to the host
+			// we asked for. The ssl::context sets `ssl::verify_peer`, which only checks
+			// that the chain terminates in a trusted root — it does NOT compare the
+			// certificate's subject/SAN against the hostname, and Boost.Asio performs no
+			// such comparison unless a verify callback asks for it. Setting the SNI
+			// extension above does not help: SNI is a hint sent to the *server* about which
+			// certificate to serve, and a man-in-the-middle is free to ignore it.
+			//
+			// So the connection previously accepted any certificate signed by any CA in the
+			// trust store, for any name at all. Obtaining such a certificate is a routine,
+			// free operation, which reduces intercepting this client's traffic to being on
+			// the network path — exactly the attack TLS is deployed here to prevent. This
+			// is the wallet's API transport, so the intercepted traffic is balance and
+			// transaction data.
+			//
+			// The callback has to be installed on the stream rather than in
+			// `callOnce_setupAndReturn__ssl_ctx()` because the hostname is per-request,
+			// while the verification mode is per-context; and `_host` is not yet assigned
+			// when the context helper runs during construction.
+			//
+			// `ssl::host_name_verification` is the current spelling (Boost 1.73+);
+			// `rfc2818_verification` is the pre-1.73 name for the same check. Both are
+			// compiled conditionally so this builds against either, since the Boost version
+			// is not pinned anywhere in the repository.
+			boost::system::error_code verify_ec;
+#if BOOST_VERSION >= 107300
+			_stream.set_verify_callback(ssl::host_name_verification(_host), verify_ec);
+#else
+			_stream.set_verify_callback(ssl::rfc2818_verification(_host), verify_ec);
+#endif
+			if (verify_ec) {
+				_call_fn_with(string(verify_ec.message()));
 				return;
 			}
 			ostringstream target_ss;
@@ -125,7 +199,7 @@ namespace HTTPRequests
 			_request.set(boost::beast::http::field::content_type, "application/json");
 			_request.set(boost::beast::http::field::accept, "application/json");
 			//
-			if (set_postbody) { // the API for this could definitely be better designed since not every request is going to be a post …… the param for this is not as elegant as it could be
+			if (set_postbody) { // the API for this could definitely be better designed since not every request is going to be a post …… the param for this is not as elegant as it could be
 				assert(_verb == boost::beast::http::verb::post);
 				//
 				StringBuffer buffer;
@@ -133,7 +207,7 @@ namespace HTTPRequests
 				postbody.Accept(writer);
 				//
 				_request.body() = buffer.GetString();
-//				cout << "~~~~> body: " << _request.body() << endl;
+//				cout << "~~~~> body: " << _request.body() << endl;
 				_request.prepare_payload(); // set body size in header
 			}
 			_resolver.async_resolve(
@@ -172,6 +246,12 @@ namespace HTTPRequests
 		std::shared_ptr<rapidjson::Document> _result;
 		//
 		// Accessors - Initialization
+
+		/**
+		 * @brief Configures and returns the SSL context for the connection.
+		 * 
+		 * @return Reference to the initialized ssl::context.
+		 */
 		ssl::context &callOnce_setupAndReturn__ssl_ctx()
 		{
 			load_root_certificates(_ssl_ctx);
@@ -182,10 +262,20 @@ namespace HTTPRequests
 		}
 		//
 		// Imperatives
+
+		/**
+		 * @brief Invokes the request callback function indicating a successful execution.
+		 */
 		void _call_fn_with_success()
 		{
 			_call_fn_with(none);
 		}
+
+		/**
+		 * @brief Invokes the request callback function with an optional error message.
+		 * 
+		 * @param err_str Optional error string if the request failed.
+		 */
 		void _call_fn_with(
 			boost::optional<string> err_str
 		) {
@@ -200,6 +290,13 @@ namespace HTTPRequests
 		}
 		//
 		// Delegation
+
+		/**
+		 * @brief Callback invoked when DNS resolution completes.
+		 * 
+		 * @param ec Boost error code.
+		 * @param resolver_results Results of the DNS resolution.
+		 */
 		void on_resolve(
 			beast::error_code ec,
 			tcp::resolver::results_type resolver_results
@@ -224,6 +321,12 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked when the TCP connection is established.
+		 * 
+		 * @param ec Boost error code.
+		 */
 		void on_connect(boost::beast::error_code ec)
 		{
 			if (ec == boost::asio::error::operation_aborted) {
@@ -243,6 +346,12 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the SSL handshake completes.
+		 * 
+		 * @param ec Boost error code.
+		 */
 		void on_handshake(beast::error_code ec)
 		{
 			if (ec) {
@@ -263,6 +372,13 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the HTTP request is successfully written to the stream.
+		 * 
+		 * @param ec Boost error code.
+		 * @param bytes_transferred Number of bytes written.
+		 */
 		void on_write(boost::beast::error_code ec, std::size_t bytes_transferred)
 		{
 			boost::ignore_unused(bytes_transferred);
@@ -285,6 +401,13 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the HTTP response is read from the stream.
+		 * 
+		 * @param ec Boost error code.
+		 * @param bytes_transferred Number of bytes read.
+		 */
 		void on_read(
 			beast::error_code ec,
 			std::size_t bytes_transferred
@@ -325,6 +448,12 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the SSL stream is fully shut down.
+		 * 
+		 * @param ec Boost error code.
+		 */
 		void on_shutdown(beast::error_code ec)
 		{
 			_isShutDown = true;
@@ -343,14 +472,37 @@ namespace HTTPRequests
 		}
 	};
 	//
+	/**
+	 * @brief A factory for generating and tracking Beast-based HTTP requests.
+	 */
 	struct RequestFactory_beast: public RequestFactory
 	{
+		/**
+		 * @brief Constructs a new Beast Request Factory.
+		 * 
+		 * @param io_ctx The Boost ASIO I/O context.
+		 */
 		RequestFactory_beast(
 			boost::asio::io_context &io_ctx
 		):	_io_ctx(io_ctx)
 		{}
+
+		/**
+		 * @brief Destroys the Beast Request Factory.
+		 */
 		~RequestFactory_beast() {}
 		//
+
+		/**
+		 * @brief Creates and executes a new HTTP request.
+		 * 
+		 * @param scheme Protocol scheme (HTTP/HTTPS).
+		 * @param authority The combined host and optional port string.
+		 * @param endpoint_path Target URL path for the request.
+		 * @param params Serialized JSON request payload.
+		 * @param fn Callback function invoked with either an error string or a valid JSON response.
+		 * @return A shared pointer to the newly allocated request handle.
+		 */
 		std::shared_ptr<Handle> new_request(
 			Scheme scheme,
 			string authority, // host+':'+port
@@ -379,15 +531,33 @@ namespace HTTPRequests
 				BOOST_THROW_EXCEPTION(logic_error("Unexpected number of authority_components"));
 				return nullptr;
 			}
-			const char *host = authority_components[0].c_str();
-			const char *port = authority_components.size() == 1
-				? port_from_scheme(scheme).c_str()
-				: authority_components[1].c_str();
+			// MEMORY SAFETY: these are `std::string` values, not `const char *`. The previous
+			// code wrote
+			//
+			//     const char *port = authority_components.size() == 1
+			//         ? port_from_scheme(scheme).c_str()
+			//         : authority_components[1].c_str();
+			//
+			// and `port_from_scheme` returns a string *by value*. That temporary is destroyed
+			// at the end of the full expression, so in the one-component branch `port` was
+			// left pointing into freed memory before it was ever read, and the `string(port)`
+			// below then copied from it. That branch is the common case, not an edge case: it
+			// is taken by every URL that does not spell out a port.
+			//
+			// The observed behaviour of a small freed std::string buffer is usually "it still
+			// looks right", which is why this survived — but it is undefined behaviour, and
+			// the value being reconstructed is the port the wallet is about to connect to.
+			// `host` was not affected (it points into a live vector element) but is converted
+			// too, so the two are handled the same way and neither can regress.
+			const string host = authority_components[0];
+			const string port = authority_components.size() == 1
+				? port_from_scheme(scheme)
+				: authority_components[1];
 			//
 			auto verb = boost::beast::http::verb::post;
 			auto handle_ptr = std::make_shared<Handle_beast>(
 				_io_ctx,
-				verb, string(host), string(port), endpoint_path,
+				verb, host, port, endpoint_path,
 				std::move(fn)
 			);
 			handle_ptr->run(
