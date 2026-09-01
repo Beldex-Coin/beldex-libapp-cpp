@@ -60,9 +60,25 @@ namespace HTTPRequests
 	using response = boost::beast::http::response<body_type>;
 	using boost::asio::ip::tcp;
 	
+	/**
+	 * @brief A Boost.Beast-based HTTP request handle implementation.
+	 * 
+	 * Inherits from the base Handle interface to manage asynchronous HTTP/HTTPS
+	 * request lifecycles, execution, and cancellation.
+	 */
 	struct Handle_beast: public Handle, public std::enable_shared_from_this<Handle_beast>
 	{
 	public:
+		/**
+		 * @brief Constructs a new Beast HTTP request handle.
+		 * 
+		 * @param io_ctx The Boost ASIO I/O context.
+		 * @param verb The HTTP verb (e.g., POST, GET).
+		 * @param host The target hostname.
+		 * @param port The target port.
+		 * @param endpoint_path The API endpoint path.
+		 * @param fn Callback function invoked with either an error string or a valid JSON response.
+		 */
 		Handle_beast(
 			boost::asio::io_context &io_ctx,
 			boost::beast::http::verb verb,
@@ -79,15 +95,31 @@ namespace HTTPRequests
 			_endpoint_path(endpoint_path),
 			_fn(std::move(fn))
 		{}
+
+		/**
+		 * @brief Destroys the Beast HTTP request handle.
+		 */
 		~Handle_beast() {}
 		//
 		// Accessors
+
+		/**
+		 * @brief Safely retrieves the parsed JSON response object.
+		 * 
+		 * @return A shared pointer to the atomic rapidjson::Document containing the response.
+		 */
 		auto atomic_get() const
 		{
 			return std::atomic_load(&_result);
 		}
 		//
 		// Imperatives - Override
+
+		/**
+		 * @brief Cancels the ongoing HTTP request.
+		 * 
+		 * Gracefully interrupts underlying sockets and streams if the connection is still active.
+		 */
 		void cancel() override
 		{
 			cout << "Canceling a HTTPRequests::Handle_beast<" << this << ">" << endl;
@@ -110,6 +142,13 @@ namespace HTTPRequests
 		}
 		//
 		// Imperatives - Public
+
+		/**
+		 * @brief Initiates the HTTP request asynchronously.
+		 * 
+		 * @param set_postbody Indicates if the request has a JSON body payload.
+		 * @param postbody The body parameters to serialize and send.
+		 */
 		void run(bool set_postbody, ReqParams postbody)
 		{
 			if (SSL_set_tlsext_host_name(_stream.native_handle(), _host.c_str()) == false) { // Set SNI Hostname (many hosts need this to handshake successfully)
@@ -160,7 +199,7 @@ namespace HTTPRequests
 			_request.set(boost::beast::http::field::content_type, "application/json");
 			_request.set(boost::beast::http::field::accept, "application/json");
 			//
-			if (set_postbody) { // the API for this could definitely be better designed since not every request is going to be a post …… the param for this is not as elegant as it could be
+			if (set_postbody) { // the API for this could definitely be better designed since not every request is going to be a post …… the param for this is not as elegant as it could be
 				assert(_verb == boost::beast::http::verb::post);
 				//
 				StringBuffer buffer;
@@ -168,7 +207,7 @@ namespace HTTPRequests
 				postbody.Accept(writer);
 				//
 				_request.body() = buffer.GetString();
-//				cout << "~~~~> body: " << _request.body() << endl;
+//				cout << "~~~~> body: " << _request.body() << endl;
 				_request.prepare_payload(); // set body size in header
 			}
 			_resolver.async_resolve(
@@ -207,6 +246,12 @@ namespace HTTPRequests
 		std::shared_ptr<rapidjson::Document> _result;
 		//
 		// Accessors - Initialization
+
+		/**
+		 * @brief Configures and returns the SSL context for the connection.
+		 * 
+		 * @return Reference to the initialized ssl::context.
+		 */
 		ssl::context &callOnce_setupAndReturn__ssl_ctx()
 		{
 			load_root_certificates(_ssl_ctx);
@@ -217,10 +262,20 @@ namespace HTTPRequests
 		}
 		//
 		// Imperatives
+
+		/**
+		 * @brief Invokes the request callback function indicating a successful execution.
+		 */
 		void _call_fn_with_success()
 		{
 			_call_fn_with(none);
 		}
+
+		/**
+		 * @brief Invokes the request callback function with an optional error message.
+		 * 
+		 * @param err_str Optional error string if the request failed.
+		 */
 		void _call_fn_with(
 			boost::optional<string> err_str
 		) {
@@ -235,6 +290,13 @@ namespace HTTPRequests
 		}
 		//
 		// Delegation
+
+		/**
+		 * @brief Callback invoked when DNS resolution completes.
+		 * 
+		 * @param ec Boost error code.
+		 * @param resolver_results Results of the DNS resolution.
+		 */
 		void on_resolve(
 			beast::error_code ec,
 			tcp::resolver::results_type resolver_results
@@ -259,6 +321,12 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked when the TCP connection is established.
+		 * 
+		 * @param ec Boost error code.
+		 */
 		void on_connect(boost::beast::error_code ec)
 		{
 			if (ec == boost::asio::error::operation_aborted) {
@@ -278,6 +346,12 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the SSL handshake completes.
+		 * 
+		 * @param ec Boost error code.
+		 */
 		void on_handshake(beast::error_code ec)
 		{
 			if (ec) {
@@ -298,6 +372,13 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the HTTP request is successfully written to the stream.
+		 * 
+		 * @param ec Boost error code.
+		 * @param bytes_transferred Number of bytes written.
+		 */
 		void on_write(boost::beast::error_code ec, std::size_t bytes_transferred)
 		{
 			boost::ignore_unused(bytes_transferred);
@@ -320,6 +401,13 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the HTTP response is read from the stream.
+		 * 
+		 * @param ec Boost error code.
+		 * @param bytes_transferred Number of bytes read.
+		 */
 		void on_read(
 			beast::error_code ec,
 			std::size_t bytes_transferred
@@ -360,6 +448,12 @@ namespace HTTPRequests
 				))
 			);
 		}
+
+		/**
+		 * @brief Callback invoked after the SSL stream is fully shut down.
+		 * 
+		 * @param ec Boost error code.
+		 */
 		void on_shutdown(beast::error_code ec)
 		{
 			_isShutDown = true;
@@ -378,14 +472,37 @@ namespace HTTPRequests
 		}
 	};
 	//
+	/**
+	 * @brief A factory for generating and tracking Beast-based HTTP requests.
+	 */
 	struct RequestFactory_beast: public RequestFactory
 	{
+		/**
+		 * @brief Constructs a new Beast Request Factory.
+		 * 
+		 * @param io_ctx The Boost ASIO I/O context.
+		 */
 		RequestFactory_beast(
 			boost::asio::io_context &io_ctx
 		):	_io_ctx(io_ctx)
 		{}
+
+		/**
+		 * @brief Destroys the Beast Request Factory.
+		 */
 		~RequestFactory_beast() {}
 		//
+
+		/**
+		 * @brief Creates and executes a new HTTP request.
+		 * 
+		 * @param scheme Protocol scheme (HTTP/HTTPS).
+		 * @param authority The combined host and optional port string.
+		 * @param endpoint_path Target URL path for the request.
+		 * @param params Serialized JSON request payload.
+		 * @param fn Callback function invoked with either an error string or a valid JSON response.
+		 * @return A shared pointer to the newly allocated request handle.
+		 */
 		std::shared_ptr<Handle> new_request(
 			Scheme scheme,
 			string authority, // host+':'+port
