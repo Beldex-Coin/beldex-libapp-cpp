@@ -82,6 +82,7 @@ namespace SendFunds
 		exceededConstructionAttempts = 14, // unable to construct for unknown reason
 		withSweepingOnlyOneAddressAllowed  = 15,
 		numAmountsDoesntMatchNumRecipients = 16,
+		invalidMNData=17,
 		//
 		codeFault_manualPaymentID_while_hasPickedAContact = 99900,
 		codeFault_unableToFindResolvedAddrOnOAContact = 99901,
@@ -111,11 +112,17 @@ namespace SendFunds
 		string tx_hash_string;
 		string tx_key_string; // this includes additional_tx_keys
 		string tx_pub_key_string; // from get_tx_pub_key_from_extra()
+		//! HF21: set only when this send deployed a new asset. It is the id the
+		//! token now has on chain, and the only place the caller can learn it --
+		//! it is derived from the descriptor, not chosen, and nothing else in the
+		//! response identifies the token that was just created.
+		boost::optional<string> token_id;
 	};
 	struct Parameters
 	{
 		//
 		// Input values:
+		boost::optional<master_node_data> mn_data;
 		bool fromWallet_didFailToInitialize;
 		bool fromWallet_didFailToBoot;
 		bool fromWallet_needsImport;
@@ -162,6 +169,30 @@ namespace SendFunds
 		//
 		std::function<void(void)> canceled_fn;
 		std::function<void(Success_RetVals retVals)> success_fn;
+		//
+		// ── HF21 privacy tokens ───────────────────────────────────────────
+		// Appended at the END on purpose: Parameters is built by positional
+		// aggregate initialisation in beldex-libapp-js's emscr_SendFunds_bridge.cpp,
+		// so inserting anywhere earlier silently re-binds every later field.
+		// Trailing members are value-initialised by an initialiser that omits
+		// them, which for boost::optional is `none` -- i.e. "ordinary BDX send".
+		//
+		//! Hex token id to send instead of BDX. The amounts in
+		//! send_amount_strings are then denominated in this token, while the fee
+		//! is still paid in BDX out of the wallet's native outputs.
+		boost::optional<string> token_id;
+		//! Decimal places of that token, from its descriptor (daemon
+		//! get_token_info). Required whenever token_id is set: send_amount_strings
+		//! are human-readable and a token's scale is its own, not BDX's 9, so
+		//! parsing with the BDX scale would silently send the wrong quantity.
+		boost::optional<uint8_t> token_decimal_point;
+		//! Set to deploy a new asset rather than transfer an existing one. The
+		//! send then creates the token described here, mints its initial supply
+		//! to the wallet's own address, and burns the protocol's deployment fee
+		//! in BDX on top of the network fee. token_id above must be the id
+		//! derived from this descriptor, and token_decimal_point its decimals,
+		//! so that the initial supply is parsed and tagged on the token's scale.
+		boost::optional<token_operation_data> token_operation;
 	};
 	//
 	// Controllers
@@ -203,6 +234,7 @@ namespace SendFunds
 		// - state
 		_Send_Task_ValsState valsState;
 		// - from setup
+		boost::optional<master_node_data> mn_data;
 		vector<uint64_t> sending_amounts;
 		vector<string> to_address_strings;
 		boost::optional<string> payment_id_string;
@@ -214,6 +246,12 @@ namespace SendFunds
 		uint64_t fee_per_o;
 		uint64_t fee_mask;
 		beldex_fork_rules::use_fork_rules_fn_type use_fork_rules;
+		//! The same value use_fork_rules was built from, kept in raw form because
+		//! transaction construction needs the number itself, not a predicate.
+		uint8_t fork_version;
+		//! Chain tip from the same response. Token registration locks its
+		//! collateral output to an absolute height, so construction needs it.
+		uint64_t blockchain_height;
 		// - re-entry params
 		boost::optional<uint64_t> prior_attempt_size_calcd_fee;
 		boost::optional<SpendableOutputToRandomAmountOutputs> prior_attempt_unspent_outs_to_mix_outs;
@@ -224,6 +262,9 @@ namespace SendFunds
 		boost::optional<uint64_t> step1_retVals__using_fee;
 		boost::optional<uint32_t> step1_retVals__mixin;
 		vector<SpendableOutput> step1_retVals__using_outs;
+		//! HF21+: token side of step1, carried to step2 alongside the BDX side.
+		boost::optional<uint64_t> step1_retVals__token_final_total_wo_fee;
+		boost::optional<uint64_t> step1_retVals__token_change_amount;
 		// - step2_retVals held for submit tx - optl for increased safety
 		boost::optional<string> step2_retVals__signed_serialized_tx_string;
 		boost::optional<string> step2_retVals__tx_hash_string;

@@ -70,6 +70,8 @@ void FormSubmissionController::handle()
 	//
 	THROW_WALLET_EXCEPTION_IF(this->valsState != WAIT_FOR_HANDLE, error::wallet_internal_error, "Expected valsState of WAIT_FOR_HANDLE");
 	this->valsState = WAIT_FOR_STEP1;
+	this->fork_version = 0; // set for real from the unspent-outs response
+	this->blockchain_height = 0;
 	//
 	if (this->parameters.fromWallet_didFailToInitialize) {
 		this->parameters.failure_fn(unableToLoadWallet, boost::none, boost::none, boost::none, boost::none);
@@ -97,14 +99,28 @@ void FormSubmissionController::handle()
 		}
                 this->sending_amounts.push_back(0);
 	} else {
+		const bool sending_token = this->parameters.token_id != boost::none
+			&& !this->parameters.token_id->empty();
+		if (sending_token && this->parameters.token_decimal_point == boost::none) {
+			// Refuse rather than fall back to the BDX scale: that would parse
+			// "1.5" of an 8-decimal token as 1500000000 instead of 150000000.
+			this->parameters.failure_fn(cannotParseAmount, boost::none, boost::none, boost::none, boost::none);
+			return;
+		}
+		// Deploying a new asset may legitimately mint nothing up front -- create
+		// the token now, mint later -- so a zero amount is not an error there.
+		const bool deploying_token = this->parameters.token_operation != boost::none;
 		this->sending_amounts.reserve(this->parameters.send_amount_strings.size());
 		for (const auto& amount : this->parameters.send_amount_strings) {
 			uint64_t parsed_amount;
-			if (!cryptonote::parse_amount(parsed_amount, amount)) {
+			const bool parsed = sending_token
+				? cryptonote::parse_token_amount(parsed_amount, amount, *this->parameters.token_decimal_point)
+				: cryptonote::parse_amount(parsed_amount, amount);
+			if (!parsed) {
 				this->parameters.failure_fn(cannotParseAmount, boost::none, boost::none, boost::none, boost::none);
 				return;
 			}
-			if (parsed_amount <= 0) {
+			if (parsed_amount <= 0 && !deploying_token) {
 				this->parameters.failure_fn(amountTooLow, boost::none, boost::none, boost::none, boost::none);
 				return;
 			}
@@ -112,6 +128,15 @@ void FormSubmissionController::handle()
 		}
 	}
 
+	boost::optional<master_node_data> mn_data_ = boost::none;
+	if(this->parameters.mn_data != boost::none){
+		this->mn_data = this->parameters.mn_data.get();
+	}
+	else{
+		this->parameters.failure_fn(invalidMNData, boost::none, boost::none, boost::none, boost::none);
+		return;
+	}
+	
 	//
 	bool resolvedAddress_exists = this->parameters.resolvedAddress != boost::none && !this->parameters.resolvedAddress->empty(); // NOTE: it might be hidden, though!
 	//
@@ -275,9 +300,15 @@ void FormSubmissionController::_proceedTo_generateSendTransaction()
 	this->parameters.preSuccess_nonTerminal_validationMessageUpdate_fn(initiatingSend); // start with just prefix
 	// ^--- TODO: this may be unnecessary .. there is no longer such a delay
 	this->parameters.preSuccess_nonTerminal_validationMessageUpdate_fn(fetchingLatestBalance);
+	/* HF22: naming the token asks the server for its outputs alongside the
+	   native ones. Both are needed in the same reply - a token transfer spends
+	   token outputs for the amount and native outputs for the fee, which is
+	   always BDX. Absent for an ordinary send, which must never be handed a
+	   token output as coin. */
 	auto req_params = new__req_params__get_unspent_outs(
 		this->parameters.from_address_string,
-		this->parameters.sec_viewKey_string
+		this->parameters.sec_viewKey_string,
+		this->parameters.token_id
 	);
   
 	this->get_unspent_outs(req_params); // wait for cb I
@@ -331,6 +362,11 @@ void FormSubmissionController::cb_I__got_unspent_outs(boost::optional<string> er
 	this->fee_per_b = *(parsed_res.per_byte_fee);
 	this->fee_per_o = *(parsed_res.fee_per_output);
 	this->fee_mask = *(parsed_res.fee_mask);
+	// Keep the number as well as the predicate: transaction construction needs
+	// the raw fork version (it used to be hard-coded to 18, which disabled every
+	// gate at or above it -- see create_transaction in beldex_transfer_utils.cpp).
+	this->fork_version = parsed_res.fork_version;
+	this->blockchain_height = parsed_res.blockchain_height;
 	this->use_fork_rules = beldex_fork_rules::make_use_fork_rules_fn(parsed_res.fork_version);
 	//
 	this->prior_attempt_size_calcd_fee = boost::none;
@@ -359,7 +395,14 @@ void FormSubmissionController::_reenterable_construct_and_send_tx()
 		//
 		this->prior_attempt_size_calcd_fee, // use this for passing step2 "must-reconstruct" return values back in, i.e. re-entry; when none, defaults to attempt at network min
 		// ^- and this will be 'none' as initial value
-		this->prior_attempt_unspent_outs_to_mix_outs // on re-entry, re-use the same outs and requested decoys, in order to land on the correct calculated fee
+		this->prior_attempt_unspent_outs_to_mix_outs, // on re-entry, re-use the same outs and requested decoys, in order to land on the correct calculated fee
+		this->parameters.token_id, // HF21: send this token rather than BDX
+		this->fork_version,
+		// HF21: when set, this send deploys a new asset instead of transferring
+		// one. Selection then draws on native outputs only -- the token has no
+		// outputs yet -- and has to cover the deployment burn as well as the fee.
+		this->parameters.token_operation,
+		this->blockchain_height
 	);
 	if (step1_retVals.errCode != noError) {
 		this->parameters.failure_fn(createTransactionCode_balancesProvided, boost::none, step1_retVals.errCode, step1_retVals.spendable_balance, step1_retVals.required_balance);
@@ -371,6 +414,8 @@ void FormSubmissionController::_reenterable_construct_and_send_tx()
 	this->step1_retVals__using_fee = step1_retVals.using_fee;
 	this->step1_retVals__change_amount = step1_retVals.change_amount;
 	this->step1_retVals__mixin = step1_retVals.mixin;
+	this->step1_retVals__token_final_total_wo_fee = step1_retVals.token_final_total_wo_fee;
+	this->step1_retVals__token_change_amount = step1_retVals.token_change_amount;
 	THROW_WALLET_EXCEPTION_IF(this->step1_retVals__using_outs.size() != 0, error::wallet_internal_error, "Expected 0 using_outs");
 	this->step1_retVals__using_outs = std::move(step1_retVals.using_outs); // move structs from stack's vector to heap's vector
 	this->valsState = WAIT_FOR_STEP2;
@@ -425,6 +470,7 @@ void FormSubmissionController::cb_II__got_random_outs(
 	beldex_transfer_utils::send_step2__try_create_transaction(
 		step2_retVals,
 		//
+		this->parameters.mn_data,
 		this->parameters.from_address_string,
 		this->parameters.sec_viewKey_string,
 		this->parameters.sec_spendKey_string,
@@ -441,7 +487,16 @@ void FormSubmissionController::cb_II__got_random_outs(
 		tie_outs_to_mix_outs_retVals.mix_outs,
 		this->use_fork_rules,
 		unlock_time,
-		this->parameters.nettype
+		this->parameters.nettype,
+		// HF21: mark every destination as carrying the token being sent. A BDX
+		// send passes an empty vector and behaves exactly as before.
+		this->parameters.token_id != boost::none && !this->parameters.token_id->empty()
+			? vector<boost::optional<string>>(this->to_address_strings.size(), this->parameters.token_id)
+			: vector<boost::optional<string>>{},
+		this->step1_retVals__token_change_amount ? *this->step1_retVals__token_change_amount : 0,
+		this->fork_version,
+		this->parameters.token_operation,
+		this->blockchain_height
 	);
 	if (step2_retVals.errCode != noError) {
 		this->parameters.failure_fn(createTranasctionCode_noBalances, boost::none, step2_retVals.errCode, boost::none, boost::none);
@@ -527,6 +582,12 @@ void FormSubmissionController::cb_III__submitted_tx(boost::optional<string> err_
 	success_retVals.isXMRAddressIntegrated = this-isXMRAddressIntegrated;
 	success_retVals.integratedAddressPIDForDisplay = this->integratedAddressPIDForDisplay;
 	success_retVals.target_addresses = this->to_address_strings;
-	
+	// HF21: hand back the id of the asset just deployed. It is derived from the
+	// descriptor rather than chosen, so this is the caller's only chance to
+	// learn it without recomputing the derivation itself.
+	if (this->parameters.token_operation != boost::none) {
+		success_retVals.token_id = this->parameters.token_id;
+	}
+
 	this->parameters.success_fn(success_retVals);
 }
